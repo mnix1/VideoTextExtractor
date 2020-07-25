@@ -1,3 +1,5 @@
+import math
+
 import numpy
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -14,19 +16,25 @@ class SimpleSubtitleCreator(SubtitleCreator):
         self.in_progress_timestamps = []
         self.in_transaction = False
         self.in_transaction_max_similarity = 0
-        self.in_progress_window_size = 10
-        self.in_transaction_min_similarity = 2
-        self.new_transaction_min_similarity = 4
+        self.in_progress_window_size = 6
+        self.in_transaction_min_similarity = 3
+        self.new_transaction_min_similarity = 3
+        self.min_cleared_text_count = 5
+        self.last_max_similarities = []
+        self.last_current_similarities = []
 
     def handle_next_frame(self, frame_index, frame_timestamp, text):
         self._update_in_progress(frame_timestamp, text)
-        calculated_similarity, _, max_similarity, max_similarity_index = self._calculate_similarity()
+        calculated_similarity, _, current_similarity, max_similarity, max_similarity_index = self._calculate_similarity()
+        self._update_last_similarities(max_similarity, current_similarity)
         print('Handling frame {};'
               ' in_transaction={};'
+              ' current_similarity={};'
               ' max_similarity={};'
               ' max_similarity_index={};'
               ' cleared_text={}'.format(frame_index,
                                         self.in_transaction,
+                                        current_similarity,
                                         max_similarity,
                                         max_similarity_index,
                                         self.in_progress_cleared_texts[-1]))
@@ -35,21 +43,56 @@ class SimpleSubtitleCreator(SubtitleCreator):
         if self.in_transaction:
             # self._simple_check_transaction_end(max_similarity, max_similarity_index)
             self._transaction_text_similarity_check_transaction_end(max_similarity, max_similarity_index)
-        if not self.in_transaction and max_similarity > self.new_transaction_min_similarity:
+        if self._should_begin_transaction():
             self._begin_transaction(max_similarity, max_similarity_index)
 
-    def _simple_check_transaction_end(self, max_similarity, max_similarity_index):
-        max_similarity_cleared_text = self.in_progress_cleared_texts[max_similarity_index]
-        similarity, _, _ = self._calculate_similarity([max_similarity_cleared_text, self.transaction_cleared_text])
-        if similarity < 1.2:
-            self._commit_transaction(max_similarity_index)
+    # def _simple_check_transaction_end(self, max_similarity, max_similarity_index):
+    #     max_similarity_cleared_text = self.in_progress_cleared_texts[max_similarity_index]
+    #     similarity, _, _ = self._calculate_similarity([max_similarity_cleared_text, self.transaction_cleared_text])
+    #     if similarity < 1.2:
+    #         self._commit_transaction(max_similarity_index)
+
+    def _should_begin_transaction(self):
+        if self.in_transaction:
+            return False
+        return self.last_max_similarities[
+                   -1] > self.new_transaction_min_similarity or self._increase_in_last_similarities()
+
+    def _increase_in_last_similarities(self):
+        if len(self.last_current_similarities) < self.in_progress_window_size:
+            return False
+        size = math.floor(self.in_progress_window_size * 0.25)
+        old_sum = sum(self.last_current_similarities[0:-size])
+        new_sum = sum(self.last_current_similarities[-size:])
+        big_increase = new_sum > old_sum > 0 and new_sum > size * 2
+        return big_increase
+
+    def _decrease_in_last_similarities(self):
+        if len(self.last_current_similarities) < self.in_progress_window_size:
+            return False
+        size = math.floor(self.in_progress_window_size * 0.5)
+        old_sum = sum(self.last_current_similarities[0:-size])
+        new_sum = sum(self.last_current_similarities[-size:])
+        return old_sum > new_sum * 1.5
+
+    def _update_last_similarities(self, max_similarity, current_similarity):
+        self.last_max_similarities.append(max_similarity)
+        self.last_current_similarities.append(current_similarity)
+        if len(self.last_max_similarities) > self.in_progress_window_size:
+            self.last_max_similarities.pop(0)
+            self.last_current_similarities.pop(0)
 
     def _transaction_text_similarity_check_transaction_end(self, max_similarity, max_similarity_index):
-        _, similarity, _, _ = self._calculate_similarity(
-            [self.transaction_cleared_text] + self.in_progress_cleared_texts)
-        in_transaction_similarity = similarity[0]
-        if in_transaction_similarity < self.in_transaction_min_similarity:
-            self._commit_transaction(max_similarity_index)
+        _, _, in_transaction_similarity, _, _ = self._calculate_similarity(
+            self.in_progress_cleared_texts + [self.transaction_cleared_text])
+        _, _, _, transaction_to_max_similarity, _ = self._calculate_similarity(
+            [self.in_progress_cleared_texts[max_similarity_index], self.transaction_cleared_text])
+        if in_transaction_similarity < self.in_transaction_min_similarity and self._decrease_in_last_similarities() and transaction_to_max_similarity < 1.5:
+            transaction_to_timestamp = self.in_progress_timestamps[max_similarity_index]
+            if transaction_to_timestamp - self.transaction_from_timestamp < 300:
+                self._rollback_transaction()
+            else:
+                self._commit_transaction(transaction_to_timestamp)
         elif in_transaction_similarity < max_similarity:
             self._upgrade_transaction(max_similarity, max_similarity_index)
 
@@ -67,13 +110,15 @@ class SimpleSubtitleCreator(SubtitleCreator):
         print('Upgrade transaction'
               ' cleared_text={}'.format(self.transaction_cleared_text))
 
-    def _commit_transaction(self, index):
-        transaction_to_timestamp = self.in_progress_timestamps[index]
+    def _commit_transaction(self, transaction_to_timestamp):
         self.exporter.append(self.transaction_from_timestamp, transaction_to_timestamp, self.transaction_text)
         self.in_transaction = False
-        self.in_transaction_max_similarity = 0
         print('Commit transaction'
               ' to_timestamp={}'.format(transaction_to_timestamp))
+
+    def _rollback_transaction(self):
+        self.in_transaction = False
+        print('Rollback transaction')
 
     def _update_in_progress(self, frame_timestamp, text):
         self.in_progress_timestamps.append(frame_timestamp)
@@ -92,6 +137,7 @@ class SimpleSubtitleCreator(SubtitleCreator):
             vectors = vectorized.toarray()
             csim = cosine_similarity(vectors)
             in_progress_similarity = sum(csim)
-            return True, in_progress_similarity, max(in_progress_similarity), numpy.argmax(in_progress_similarity),
+            return True, in_progress_similarity, in_progress_similarity[-1], max(in_progress_similarity), numpy.argmax(
+                in_progress_similarity),
         except:
-            return False, [], -1, -1
+            return False, [], 0, 0, -1

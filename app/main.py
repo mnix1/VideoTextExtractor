@@ -32,7 +32,7 @@ def video_subtitles_generator(video_path, subtitle_creator, lang='eng', video_te
 
     convert_video_to_image_frames(video_path,
                                   on_video_frame_extracted=handle_video_frame_extracted,
-                                  from_frame=3000,
+                                  from_frame=3080,
                                   frame_increase=1)
 
 
@@ -54,9 +54,12 @@ stopwords = init_stopwords('spanish')
 
 
 def string_cleaner(text):
-    text = ''.join([word for word in text if word not in string.punctuation])
+    text = ''.join(
+        [word for word in text if word in string.ascii_letters or word in string.digits or word in string.whitespace])
     text = text.lower()
     text = ' '.join([word for word in text.split() if word not in stopwords])
+    if len(text) <= 4:
+        return ''
     return text
 
 
