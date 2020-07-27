@@ -16,10 +16,9 @@ class SimpleSubtitleCreator(SubtitleCreator):
         self.in_progress_timestamps = []
         self.in_transaction = False
         self.in_transaction_max_similarity = 0
-        self.in_progress_window_size = 6
-        self.in_transaction_min_similarity = 3
-        self.new_transaction_min_similarity = 3
-        self.min_cleared_text_count = 5
+        self.in_progress_window_size = 16
+        self.in_transaction_min_similarity = 4
+        self.new_transaction_min_similarity = 8
         self.last_max_similarities = []
         self.last_current_similarities = []
 
@@ -87,13 +86,14 @@ class SimpleSubtitleCreator(SubtitleCreator):
             self.in_progress_cleared_texts + [self.transaction_cleared_text])
         _, _, _, transaction_to_max_similarity, _ = self._calculate_similarity(
             [self.in_progress_cleared_texts[max_similarity_index], self.transaction_cleared_text])
-        if in_transaction_similarity < self.in_transaction_min_similarity and self._decrease_in_last_similarities() and transaction_to_max_similarity < 1.5:
+        if in_transaction_similarity < self.in_transaction_min_similarity or (
+                self._decrease_in_last_similarities() and transaction_to_max_similarity < 1.5):
             transaction_to_timestamp = self.in_progress_timestamps[max_similarity_index]
             if transaction_to_timestamp - self.transaction_from_timestamp < 300:
                 self._rollback_transaction()
             else:
                 self._commit_transaction(transaction_to_timestamp)
-        elif in_transaction_similarity < max_similarity:
+        elif self.in_transaction_max_similarity < max_similarity:
             self._upgrade_transaction(max_similarity, max_similarity_index)
 
     def _begin_transaction(self, max_similarity, max_similarity_index):
