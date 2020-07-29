@@ -16,9 +16,9 @@ class SimpleSubtitleCreator(SubtitleCreator):
         self.in_progress_timestamps = []
         self.in_transaction = False
         self.in_transaction_max_similarity = 0
-        self.in_progress_window_size = 16
-        self.in_transaction_min_similarity = 4
-        self.new_transaction_min_similarity = 8
+        self.in_progress_window_size = 14
+        self.in_transaction_min_similarity = 5
+        self.new_transaction_min_similarity = 7
         self.last_max_similarities = []
         self.last_current_similarities = []
 
@@ -38,12 +38,13 @@ class SimpleSubtitleCreator(SubtitleCreator):
                                         max_similarity_index,
                                         self.in_progress_cleared_texts[-1]))
         if not calculated_similarity:
-            return
+            return False
         if self.in_transaction:
             # self._simple_check_transaction_end(max_similarity, max_similarity_index)
             self._transaction_text_similarity_check_transaction_end(max_similarity, max_similarity_index)
         if self._should_begin_transaction():
             self._begin_transaction(max_similarity, max_similarity_index)
+        return True
 
     # def _simple_check_transaction_end(self, max_similarity, max_similarity_index):
     #     max_similarity_cleared_text = self.in_progress_cleared_texts[max_similarity_index]
